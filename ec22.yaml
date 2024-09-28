@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: EC2 Template
+
+Resources:
+  # Create Security Group
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP and SSH access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0 # Allow HTTP traffic
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0 # Allow ssh traffic
+
+  # Create IAM role
+  EC2IamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+  # Create instance profile
+  EC2IamInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2IamRole
+
+  # Create EC2 instance
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      DisableApiTermination: false # allow terminate instance using console
+      ImageId: ami-0ebfd941bbafe70c6
+      InstanceType: t2.micro
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      IamInstanceProfile: !Ref EC2IamInstanceProfile
+      UserData: !Base64 |
+        #!/bin/bash -ex
+        export HOME=~
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh | bash
+        source ~/.nvm/nvm.sh
+        nvm install 16
+        nvm use 16 
+        cd ~/
+        aws s3 cp s3://lab8bucket/web-tier/ web-tier --recursive
+        cd ~/web-tier
+        npm install
+        npm run build
+        mkdir /var/www /var/www/html /var/www/html/web-tier
+        cp -r ~/web-tier/build /var/www/html/web-tier/
+        sudo sudo yum install nginx -y
+        cd /etc/nginx
+        sudo rm nginx.conf
+        sudo aws s3 cp s3://lab8bucket/nginx.conf .
+        sudo service nginx restart
+        chown -R ec2-user /var/www/html/web-tier
+        chmod -R 755 /var/www/html/web-tier
+        sudo chkconfig nginx on
+
+Outputs:
+  InstanceId:
+    Description: The instance ID of the newly created EC2 instance
+    Value: !Ref EC2Instance
+  PublicIp:
+    Description: The public IP of the Web EC2 instance
+    Value: !GetAtt EC2Instance.PublicIp
